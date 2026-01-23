@@ -1,0 +1,27 @@
+# YOLO26 Medical Dataset Configuration (2-class binary)
+#
+# Clinical context:
+# - Binary classification: Suspicious vs Negative
+# - Primary goal: "Don't miss any suspicious region"
+# - DCIS + IDC merged into single "Suspicious" class
+#
+# Data format:
+# - Uses Ultralytics-compatible format with image path lists
+# - Labels generated from JSON manifests and symlinked to expected locations
+#
+# Dataset statistics:
+#   Train: 19000 images
+#   Val:   2275 images
+#   Test:  17785 images
+#   Total: 39060 images
+#
+# To regenerate labels, run:
+#   python scripts/convert_manifest_to_ultralytics.py
+
+path: /home/ubuntu/ImgAssistClone/experiments/yolo26/data
+train: train.txt
+val: val.txt
+test: test.txt
+
+nc: 1
+names: ['Suspicious']

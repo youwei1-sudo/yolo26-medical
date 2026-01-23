@@ -1,0 +1,58 @@
+# YOLO26 Medical Imaging Hyperparameters
+# Transferred from optimized YOLOv9 config (hyp.v12-unstretch.yaml)
+#
+# Key considerations for medical imaging:
+# - Conservative augmentation (no rotation/shear for OCT fixed orientation)
+# - Mosaic disabled to preserve spatial relationships
+# - High recall priority for cancer detection
+
+# Learning rate and optimization
+lr0: 0.00173
+lrf: 0.021
+momentum: 0.895
+weight_decay: 0.000446
+warmup_epochs: 4.8
+warmup_momentum: 0.8
+warmup_bias_lr: 0.1
+
+# Loss weights (optimized for medical detection)
+box: 7.2
+cls: 0.31
+label_smoothing: 0.189
+
+# Geometric augmentation (conservative for medical)
+degrees: 0.0         # Disabled - OCT images have fixed orientation
+translate: 0.014
+scale: 0.42
+shear: 0.0           # Disabled - preserves axis-aligned boxes
+perspective: 0.0
+
+# Color augmentation (conservative)
+hsv_h: 0.033
+hsv_s: 0.098
+hsv_v: 0.038
+
+# Flip augmentation
+flipud: 0.0          # Disabled - OCT vertical orientation matters
+fliplr: 0.113
+
+# Advanced augmentation
+mosaic: 0.0          # Disabled - medical images need spatial context
+mixup: 0.091
+copy_paste: 0.24
+
+# Training settings
+batch: 36
+epochs: 200
+patience: 15         # Early stopping patience
+save_period: 5       # Checkpoint save frequency
+workers: 48
+imgsz: 640
+
+# Device and precision
+device: 0
+amp: true            # Automatic mixed precision
+
+# Validation
+val: true
+plots: true
