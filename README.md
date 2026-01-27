@@ -156,6 +156,29 @@ Uses Ultralytics format:
 - ultralytics >= 8.0
 - wandb (optional)
 
+## Documentation
+
+Detailed technical documentation is available in the `docs/` folder:
+
+- **[YOLO26 Technical Analysis](docs/YOLO26_TECHNICAL_ANALYSIS.md)**: Deep dive into YOLO26 architecture, innovations (NMS-free, DFL removal, MuSGD), and performance benchmarks
+- **[Code Verification Report](docs/YOLO26_VERIFICATION.md)**: Verification that the Ultralytics implementation matches documented specifications
+- **[Training Results](docs/TRAINING_RESULTS.md)**: Detailed training results for medical imaging fine-tuning
+
+## Training Results Summary
+
+### Best Model: YOLO26m v2 Optimized
+
+| Metric | Value |
+|--------|-------|
+| mAP@0.5 | **0.781** |
+| mAP@0.5:0.95 | **0.422** |
+| Precision | 0.761 |
+| Recall | 0.693 |
+| Epochs | 130 |
+| Image Size | 768 |
+
+**Best weights:** `runs/detect/runs/finetune/yolo26m_v2_optimized/weights/best.pt`
+
 ## License
 
 MIT License

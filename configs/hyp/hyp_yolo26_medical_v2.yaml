@@ -1,0 +1,70 @@
+# YOLO26 Medical Imaging Hyperparameters v2
+# Optimized for better recall and generalization
+#
+# Changes from v1:
+# - Larger image size (768) for small lesion detection
+# - Increased cls loss weight for better classification
+# - Cosine LR schedule for better convergence
+# - Light mosaic (0.2) for diversity
+# - Longer training with more patience
+
+# Learning rate and optimization
+lr0: 0.002              # Slightly higher initial LR
+lrf: 0.01               # Lower final LR ratio
+momentum: 0.9
+weight_decay: 0.0005
+warmup_epochs: 5
+warmup_momentum: 0.8
+warmup_bias_lr: 0.1
+
+# Loss weights (rebalanced for medical detection)
+box: 7.5                # Box regression
+cls: 0.5                # Increased classification weight
+dfl: 1.5                # Distribution focal loss
+label_smoothing: 0.1    # Reduced for cleaner labels
+
+# Geometric augmentation (conservative for medical)
+degrees: 0.0            # Disabled - OCT fixed orientation
+translate: 0.1          # Increased translation
+scale: 0.5              # Increased scale variation
+shear: 0.0              # Disabled
+perspective: 0.0
+
+# Color augmentation
+hsv_h: 0.015            # Reduced - medical images have consistent color
+hsv_s: 0.7              # Increased saturation variation
+hsv_v: 0.4              # Increased value variation
+
+# Flip augmentation
+flipud: 0.0             # Disabled - OCT vertical matters
+fliplr: 0.5             # Increased horizontal flip
+
+# Advanced augmentation
+mosaic: 0.2             # Light mosaic for diversity
+mixup: 0.1              # Light mixup
+copy_paste: 0.3         # Copy-paste augmentation
+erasing: 0.4            # Random erasing
+
+# Training settings
+batch: 24               # Reduced for larger image size
+epochs: 300             # More epochs
+patience: 30            # More patience
+close_mosaic: 20        # Disable mosaic last 20 epochs
+save_period: 10         # Checkpoint frequency
+workers: 48
+imgsz: 768              # Larger image size
+
+# Optimizer
+optimizer: SGD          # SGD with momentum
+cos_lr: true            # Cosine LR schedule
+
+# Device and precision
+device: 0
+amp: true
+
+# Regularization
+dropout: 0.0            # No dropout for detection
+
+# Validation
+val: true
+plots: true

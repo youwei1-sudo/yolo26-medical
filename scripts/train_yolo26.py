@@ -114,7 +114,12 @@ def train_yolo26(args):
 
     # Load pretrained model
     print(f"\nLoading pretrained {args.model}...")
-    model = YOLO(f"{args.model}.pt")
+    # Check weights folder first, then current directory
+    weights_path = PROJECT_ROOT / 'weights' / f"{args.model}.pt"
+    if weights_path.exists():
+        model = YOLO(str(weights_path))
+    else:
+        model = YOLO(f"{args.model}.pt")
 
     # Prepare training arguments
     train_args = {
