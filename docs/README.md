@@ -1,5 +1,7 @@
 # YOLO26 Medical Imaging Experiment Documentation
 
+[中文版](zh/README.md)
+
 YOLO26 fine-tuning for ImgAssist OCT cancer detection.
 
 ---
