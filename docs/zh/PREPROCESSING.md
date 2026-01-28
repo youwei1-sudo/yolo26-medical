@@ -216,7 +216,66 @@ python scripts/val_yolo26.py \
 
 ## 下一步
 
-1. 使用 `yaxis_squash_h320` 数据集训练 YOLO26
-2. 使用 `imgsz: [320, 672]`
-3. 对比 Val 和 Test 性能，验证修复效果
-4. 目标: Val-Test 差距 < 10%
+### Step 1: 训练 (使用修复后的数据)
+
+```bash
+python scripts/train_yolo26.py \
+    --model yolo26s \
+    --data data/yaxis_squash_h320/data_2class.yaml \
+    --imgsz 320 672 \
+    --epochs 200 \
+    --batch 36 \
+    --mosaic 0.0 \
+    --name yolo26s_yaxis_squash
+```
+
+关键参数:
+- `--imgsz 320 672`: 高度 320，宽度 672 (与预处理一致)
+- `--mosaic 0.0`: 禁用 mosaic (保留空间关系)
+
+### Step 2: 框级验证 (Box-Level)
+
+```bash
+python scripts/val_yolo26.py \
+    --weights runs/finetune/yolo26s_yaxis_squash/weights/best.pt \
+    --data data/yaxis_squash_h320/data_2class.yaml \
+    --split test \
+    --conf 0.25
+```
+
+输出指标: mAP@0.5, mAP@0.5:0.95, Precision, Recall
+
+### Step 3: 补丁级验证 (Patch-Level) - 医学关键指标
+
+```bash
+python scripts/val_yolo26.py \
+    --weights runs/finetune/yolo26s_yaxis_squash/weights/best.pt \
+    --data data/yaxis_squash_h320/data_2class.yaml \
+    --split test \
+    --eval-mode patch \
+    --conf 0.001 \
+    --labels-dir data/yaxis_squash_h320/labels/test
+```
+
+输出指标:
+- **Sensitivity (敏感度)**: TP/(TP+FN) - 最关键，不漏诊
+- **Specificity (特异度)**: TN/(TN+FP)
+- **F2 Score**: 召回率权重 4 倍
+
+### Step 4: 验证修复效果
+
+对比 Val 和 Test 的 mAP@0.5:
+- **目标**: Val-Test 差距 < 10%
+- **之前**: -51% (YOLO26s), -61% (YOLO26m)
+
+### Step 5: 与 YOLOv9 对比
+
+```bash
+python scripts/compare_yolov9_yolo26.py \
+    --yolov9-weights /path/to/yolov9_best.pt \
+    --yolo26-weights runs/finetune/yolo26s_yaxis_squash/weights/best.pt \
+    --data data/yaxis_squash_h320/data_2class.yaml \
+    --split test \
+    --conf 0.001 \
+    --eval-mode patch
+```

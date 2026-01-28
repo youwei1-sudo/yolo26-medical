@@ -8,6 +8,7 @@ YOLO26 在 ImgAssist OCT 癌症检测数据集上的微调实验。
 
 | 文档 | 说明 |
 |------|------|
+| [DATA_FLOW.md](DATA_FLOW.md) | **完整流程**: 数据 → 预处理 → 训练 → 推理 (附代码位置) |
 | [PREPROCESSING.md](PREPROCESSING.md) | **关键修复**: Y轴压缩预处理，解决 Val-Test 性能差距 |
 | [TRAINING.md](TRAINING.md) | 训练配置和结果 |
 | [EVALUATION.md](EVALUATION.md) | YOLOv9 vs YOLO26 对比 |

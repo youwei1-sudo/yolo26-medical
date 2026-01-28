@@ -216,7 +216,66 @@ python scripts/val_yolo26.py \
 
 ## Next Steps
 
-1. Train YOLO26 with `yaxis_squash_h320` dataset
-2. Use `imgsz: [320, 672]`
-3. Compare Val and Test performance to verify fix
-4. Target: Val-Test gap < 10%
+### Step 1: Train with Fixed Data
+
+```bash
+python scripts/train_yolo26.py \
+    --model yolo26s \
+    --data data/yaxis_squash_h320/data_2class.yaml \
+    --imgsz 320 672 \
+    --epochs 200 \
+    --batch 36 \
+    --mosaic 0.0 \
+    --name yolo26s_yaxis_squash
+```
+
+Key parameters:
+- `--imgsz 320 672`: height 320, width 672 (matches preprocessing)
+- `--mosaic 0.0`: disable mosaic (preserve spatial relationships)
+
+### Step 2: Box-Level Validation
+
+```bash
+python scripts/val_yolo26.py \
+    --weights runs/finetune/yolo26s_yaxis_squash/weights/best.pt \
+    --data data/yaxis_squash_h320/data_2class.yaml \
+    --split test \
+    --conf 0.25
+```
+
+Output: mAP@0.5, mAP@0.5:0.95, Precision, Recall
+
+### Step 3: Patch-Level Validation (Medical Key Metrics)
+
+```bash
+python scripts/val_yolo26.py \
+    --weights runs/finetune/yolo26s_yaxis_squash/weights/best.pt \
+    --data data/yaxis_squash_h320/data_2class.yaml \
+    --split test \
+    --eval-mode patch \
+    --conf 0.001 \
+    --labels-dir data/yaxis_squash_h320/labels/test
+```
+
+Output:
+- **Sensitivity**: TP/(TP+FN) - Critical, don't miss cancer
+- **Specificity**: TN/(TN+FP)
+- **F2 Score**: Recall weighted 4x
+
+### Step 4: Verify Fix
+
+Compare Val vs Test mAP@0.5:
+- **Target**: Val-Test gap < 10%
+- **Before**: -51% (YOLO26s), -61% (YOLO26m)
+
+### Step 5: Compare with YOLOv9
+
+```bash
+python scripts/compare_yolov9_yolo26.py \
+    --yolov9-weights /path/to/yolov9_best.pt \
+    --yolo26-weights runs/finetune/yolo26s_yaxis_squash/weights/best.pt \
+    --data data/yaxis_squash_h320/data_2class.yaml \
+    --split test \
+    --conf 0.001 \
+    --eval-mode patch
+```
