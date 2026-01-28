@@ -20,6 +20,8 @@ Metrics computed:
 Usage:
     python compute_patch_metrics.py --predictions runs/val/exp/predictions.json --labels data/labels/test
     python compute_patch_metrics.py --pred-dir runs/val/exp/labels --labels data/labels/test
+    python compute_patch_metrics.py --predictions preds.json --labels labels/ --multi-conf 0.001,0.01,0.1,0.25,0.5
+    python compute_patch_metrics.py --image-list data/test.txt --labels data/labels/test --predictions preds.json
 """
 
 import argparse
@@ -275,6 +277,88 @@ def print_metrics_report(metrics: Dict[str, float], title: str = "Patch-Level Me
     print(f"\n{'='*60}")
 
 
+def compute_multi_conf_metrics(
+    predictions: Dict[str, List],
+    labels: Dict[str, List],
+    conf_thresholds: List[float]
+) -> Dict[str, Dict[str, float]]:
+    """
+    Compute patch metrics at multiple confidence thresholds.
+
+    Args:
+        predictions: Dict mapping image_name to list of predictions
+        labels: Dict mapping image_name to list of GT boxes
+        conf_thresholds: List of confidence thresholds to evaluate
+
+    Returns:
+        Dict mapping conf_threshold to metrics
+    """
+    results = {}
+    for conf in conf_thresholds:
+        metrics = compute_patch_metrics(predictions, labels, conf)
+        results[str(conf)] = metrics
+    return results
+
+
+def print_multi_conf_report(multi_metrics: Dict[str, Dict[str, float]], title: str = "Multi-Confidence Metrics"):
+    """Print multi-confidence metrics in a table format."""
+    print(f"\n{'='*90}")
+    print(f"{title:^90}")
+    print(f"{'='*90}")
+
+    # Header
+    print(f"\n{'Conf':>8} | {'Sens':>8} | {'Spec':>8} | {'Prec':>8} | {'F1':>8} | {'F2':>8} | {'TP':>6} | {'FN':>6} | {'FP':>6} | {'TN':>6}")
+    print(f"{'-'*90}")
+
+    # Sort by confidence threshold
+    for conf in sorted(multi_metrics.keys(), key=lambda x: float(x)):
+        m = multi_metrics[conf]
+        print(f"{float(conf):>8.4f} | {m['sensitivity']:>8.4f} | {m['specificity']:>8.4f} | "
+              f"{m['precision']:>8.4f} | {m['f1_score']:>8.4f} | {m['f2_score']:>8.4f} | "
+              f"{m['tp']:>6} | {m['fn']:>6} | {m['fp']:>6} | {m['tn']:>6}")
+
+    print(f"{'='*90}")
+
+    # Find best operating points
+    best_sens = max(multi_metrics.items(), key=lambda x: x[1]['sensitivity'])
+    best_f2 = max(multi_metrics.items(), key=lambda x: x[1]['f2_score'])
+
+    print(f"\nBest Operating Points:")
+    print(f"  Highest Sensitivity: conf={best_sens[0]} -> Sens={best_sens[1]['sensitivity']:.4f}")
+    print(f"  Highest F2 Score:    conf={best_f2[0]} -> F2={best_f2[1]['f2_score']:.4f}")
+
+
+def load_image_list(image_list_path: str) -> List[str]:
+    """Load image paths from a text file (train.txt, val.txt, test.txt format)."""
+    with open(image_list_path, 'r') as f:
+        return [line.strip() for line in f if line.strip()]
+
+
+def filter_by_image_list(
+    predictions: Dict[str, List],
+    labels: Dict[str, List],
+    image_list: List[str]
+) -> Tuple[Dict[str, List], Dict[str, List]]:
+    """
+    Filter predictions and labels to only include images in the image list.
+
+    Args:
+        predictions: Dict mapping image_name to predictions
+        labels: Dict mapping image_name to labels
+        image_list: List of image paths
+
+    Returns:
+        Tuple of (filtered_predictions, filtered_labels)
+    """
+    # Extract image names from paths
+    image_names = {Path(p).stem for p in image_list}
+
+    filtered_preds = {k: v for k, v in predictions.items() if k in image_names}
+    filtered_labels = {k: v for k, v in labels.items() if k in image_names}
+
+    return filtered_preds, filtered_labels
+
+
 def save_metrics_json(metrics: Dict[str, float], output_path: str):
     """Save metrics to JSON file."""
     with open(output_path, 'w') as f:
@@ -320,6 +404,18 @@ def main():
         help='Confidence threshold for predictions'
     )
     parser.add_argument(
+        '--multi-conf',
+        type=str,
+        default=None,
+        help='Comma-separated list of confidence thresholds for multi-conf evaluation (e.g., "0.001,0.01,0.1,0.25,0.5")'
+    )
+    parser.add_argument(
+        '--image-list',
+        type=str,
+        default=None,
+        help='Path to image list file (train.txt/val.txt/test.txt) to filter images'
+    )
+    parser.add_argument(
         '--output',
         type=str,
         help='Output JSON file for metrics'
@@ -338,7 +434,7 @@ def main():
     if args.predictions:
         predictions = load_predictions_from_json(args.predictions)
     else:
-        predictions = load_predictions_from_txt_dir(args.pred_dir, args.conf)
+        predictions = load_predictions_from_txt_dir(args.pred_dir, conf_thres=0.0)  # Load all, filter later
     print(f"  Loaded predictions for {len(predictions)} images")
 
     # Load labels
@@ -349,16 +445,35 @@ def main():
         labels = load_labels_from_manifest(args.manifest)
     print(f"  Loaded labels for {len(labels)} images")
 
-    # Compute metrics
-    print(f"\nComputing metrics (conf threshold: {args.conf})...")
-    metrics = compute_patch_metrics(predictions, labels, args.conf)
+    # Filter by image list if provided
+    if args.image_list:
+        print(f"\nFiltering by image list: {args.image_list}")
+        image_list = load_image_list(args.image_list)
+        predictions, labels = filter_by_image_list(predictions, labels, image_list)
+        print(f"  Filtered to {len(labels)} images")
 
-    # Print report
-    print_metrics_report(metrics, args.title)
+    # Multi-confidence evaluation
+    if args.multi_conf:
+        conf_thresholds = [float(c.strip()) for c in args.multi_conf.split(',')]
+        print(f"\nComputing metrics at {len(conf_thresholds)} confidence thresholds...")
 
-    # Save to JSON if requested
-    if args.output:
-        save_metrics_json(metrics, args.output)
+        multi_metrics = compute_multi_conf_metrics(predictions, labels, conf_thresholds)
+        print_multi_conf_report(multi_metrics, args.title)
+
+        # Save to JSON if requested
+        if args.output:
+            save_metrics_json(multi_metrics, args.output)
+    else:
+        # Single confidence threshold
+        print(f"\nComputing metrics (conf threshold: {args.conf})...")
+        metrics = compute_patch_metrics(predictions, labels, args.conf)
+
+        # Print report
+        print_metrics_report(metrics, args.title)
+
+        # Save to JSON if requested
+        if args.output:
+            save_metrics_json(metrics, args.output)
 
 
 if __name__ == '__main__':

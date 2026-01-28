@@ -5,6 +5,10 @@ YOLO26 Validation Script
 Run validation on fine-tuned YOLO26 models and compute metrics.
 Supports validation on train/val/test splits and comparison with YOLOv9.
 
+Evaluation Modes:
+    - box: Standard box-level metrics (mAP, precision, recall)
+    - patch: Patch-level metrics (sensitivity, specificity, F2) - matches YOLOv9 evaluation
+
 WandB Integration:
     - Logs validation metrics to WandB
     - Creates comparison tables for model evaluation
@@ -13,6 +17,7 @@ WandB Integration:
 Usage:
     python val_yolo26.py --weights runs/finetune/yolo26s_2class_v12/weights/best.pt
     python val_yolo26.py --weights best.pt --split test --conf 0.25
+    python val_yolo26.py --weights best.pt --split test --eval-mode patch --conf 0.001
     python val_yolo26.py --compare  # Compare with YOLOv9 baseline
     python val_yolo26.py --wandb-project ImgAssist_YOLO26
 """
@@ -23,10 +28,12 @@ import sys
 from pathlib import Path
 from datetime import datetime
 import json
+from typing import Dict, List, Any, Optional
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / 'scripts'))
 
 # Try to import wandb for logging
 try:
@@ -122,6 +129,257 @@ def log_comparison_to_wandb(results: dict, wandb_enabled: bool):
                 wandb.log(delta)
     except Exception as e:
         print(f"Warning: Failed to log comparison to WandB: {e}")
+
+
+def compute_patch_metrics_from_predictions(
+    predictions: Dict[str, List],
+    labels: Dict[str, List],
+    conf_thres: float = 0.001
+) -> Dict[str, Any]:
+    """
+    Compute patch-level binary classification metrics.
+
+    A patch is:
+    - TP if it has GT boxes AND has predictions (above conf_thres)
+    - TN if it has no GT boxes AND has no predictions
+    - FP if it has no GT boxes BUT has predictions
+    - FN if it has GT boxes BUT has no predictions
+
+    Args:
+        predictions: Dict mapping image_name to list of predictions with 'conf'
+        labels: Dict mapping image_name to list of GT boxes
+        conf_thres: Confidence threshold for predictions
+
+    Returns:
+        Dict with all computed metrics
+    """
+    # Get all image names from labels
+    all_images = set(labels.keys())
+
+    tp, tn, fp, fn = 0, 0, 0, 0
+
+    for img_name in all_images:
+        gt_boxes = labels.get(img_name, [])
+        pred_boxes = predictions.get(img_name, [])
+
+        # Filter predictions by confidence
+        if pred_boxes:
+            pred_boxes = [p for p in pred_boxes if p.get('conf', 1.0) >= conf_thres]
+
+        has_gt = len(gt_boxes) > 0
+        has_pred = len(pred_boxes) > 0
+
+        if has_gt and has_pred:
+            tp += 1
+        elif not has_gt and not has_pred:
+            tn += 1
+        elif not has_gt and has_pred:
+            fp += 1
+        else:  # has_gt and not has_pred
+            fn += 1
+
+    # Compute metrics
+    total = tp + tn + fp + fn
+    accuracy = (tp + tn) / total if total > 0 else 0
+
+    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
+    recall = sensitivity
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+    f2 = 5 * precision * recall / (4 * precision + recall) if (4 * precision + recall) > 0 else 0
+
+    npv = tn / (tn + fn) if (tn + fn) > 0 else 0
+
+    return {
+        'total_patches': total,
+        'tp': tp,
+        'tn': tn,
+        'fp': fp,
+        'fn': fn,
+        'accuracy': accuracy,
+        'sensitivity': sensitivity,
+        'recall': recall,
+        'specificity': specificity,
+        'precision': precision,
+        'npv': npv,
+        'f1_score': f1,
+        'f2_score': f2,
+        'positive_rate': (tp + fn) / total if total > 0 else 0,
+        'negative_rate': (tn + fp) / total if total > 0 else 0,
+        'conf_threshold': conf_thres
+    }
+
+
+def load_labels_from_txt_dir(labels_dir: str) -> Dict[str, List]:
+    """Load ground truth labels from directory of YOLO-format txt files."""
+    labels_dir = Path(labels_dir)
+    labels_by_image = {}
+
+    for txt_file in labels_dir.glob('*.txt'):
+        img_name = txt_file.stem
+        labels = []
+
+        with open(txt_file, 'r') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 5:
+                    cls = int(parts[0])
+                    x, y, w, h = map(float, parts[1:5])
+                    labels.append({
+                        'class': cls,
+                        'bbox': [x, y, w, h]
+                    })
+
+        labels_by_image[img_name] = labels
+
+    return labels_by_image
+
+
+def run_patch_level_evaluation(
+    weights: str,
+    data_config: str,
+    labels_dir: str,
+    split: str = 'test',
+    imgsz: int = 640,
+    conf_thres: float = 0.001,
+    device: int = 0,
+    save_dir: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Run patch-level evaluation matching YOLOv9's evaluation methodology.
+
+    Args:
+        weights: Path to model weights
+        data_config: Path to data YAML config
+        labels_dir: Directory containing ground truth labels
+        split: Dataset split
+        imgsz: Image size
+        conf_thres: Confidence threshold (default 0.001 for high sensitivity)
+        device: GPU device
+        save_dir: Directory to save predictions
+
+    Returns:
+        Dict with patch-level metrics
+    """
+    from ultralytics import YOLO
+    import yaml
+
+    print(f"\nLoading model: {weights}")
+    model = YOLO(weights)
+
+    # Load data config to get image list
+    with open(data_config, 'r') as f:
+        data_cfg = yaml.safe_load(f)
+
+    data_path = Path(data_cfg.get('path', ''))
+    split_file = data_path / f"{split}.txt"
+
+    if not split_file.exists():
+        print(f"Warning: Split file not found: {split_file}")
+        # Try to construct from data config path
+        split_file = Path(data_config).parent / f"{split}.txt"
+
+    # Load image list
+    image_paths = []
+    if split_file.exists():
+        with open(split_file, 'r') as f:
+            image_paths = [line.strip() for line in f if line.strip()]
+    else:
+        print(f"Warning: Could not find image list file for split '{split}'")
+        return {}
+
+    print(f"Running inference on {len(image_paths)} images...")
+    print(f"Confidence threshold: {conf_thres}")
+
+    # Run inference and collect predictions
+    predictions = {}
+    batch_size = 16
+
+    for i in range(0, len(image_paths), batch_size):
+        batch_paths = image_paths[i:i + batch_size]
+        results = model.predict(
+            source=batch_paths,
+            imgsz=imgsz,
+            conf=conf_thres,
+            device=device,
+            verbose=False
+        )
+
+        for path, result in zip(batch_paths, results):
+            img_name = Path(path).stem
+            preds = []
+
+            if result.boxes is not None and len(result.boxes) > 0:
+                for box in result.boxes:
+                    preds.append({
+                        'conf': float(box.conf[0]),
+                        'cls': int(box.cls[0]),
+                        'xyxy': box.xyxy[0].tolist()
+                    })
+
+            predictions[img_name] = preds
+
+        if (i + batch_size) % 1000 == 0 or i + batch_size >= len(image_paths):
+            print(f"  Processed {min(i + batch_size, len(image_paths))}/{len(image_paths)} images")
+
+    # Load ground truth labels
+    print(f"\nLoading ground truth labels from: {labels_dir}")
+    labels = load_labels_from_txt_dir(labels_dir)
+    print(f"  Loaded labels for {len(labels)} images")
+
+    # Compute patch-level metrics
+    print(f"\nComputing patch-level metrics...")
+    metrics = compute_patch_metrics_from_predictions(predictions, labels, conf_thres)
+
+    # Save predictions if requested
+    if save_dir:
+        save_path = Path(save_dir)
+        save_path.mkdir(parents=True, exist_ok=True)
+
+        pred_file = save_path / 'predictions.json'
+        with open(pred_file, 'w') as f:
+            json.dump(predictions, f)
+        print(f"\nPredictions saved to: {pred_file}")
+
+        metrics_file = save_path / 'patch_metrics.json'
+        with open(metrics_file, 'w') as f:
+            json.dump(metrics, f, indent=2)
+        print(f"Metrics saved to: {metrics_file}")
+
+    return metrics
+
+
+def print_patch_metrics(metrics: Dict[str, Any], title: str = "Patch-Level Metrics"):
+    """Print formatted patch-level metrics report."""
+    print(f"\n{'='*60}")
+    print(f"{title:^60}")
+    print(f"{'='*60}")
+
+    print(f"\nConfusion Matrix:")
+    print(f"                 Predicted")
+    print(f"              Pos      Neg")
+    print(f"Actual Pos   {metrics['tp']:>5}    {metrics['fn']:>5}   (TP, FN)")
+    print(f"Actual Neg   {metrics['fp']:>5}    {metrics['tn']:>5}   (FP, TN)")
+
+    print(f"\nPatch Statistics:")
+    print(f"  Total patches:     {metrics['total_patches']}")
+    print(f"  Positive patches:  {metrics['tp'] + metrics['fn']} ({metrics['positive_rate']*100:.1f}%)")
+    print(f"  Negative patches:  {metrics['tn'] + metrics['fp']} ({metrics['negative_rate']*100:.1f}%)")
+
+    print(f"\nCore Metrics (conf={metrics.get('conf_threshold', 'N/A')}):")
+    print(f"  Sensitivity (Recall): {metrics['sensitivity']:.4f}  [TP/(TP+FN)] - Don't miss positives")
+    print(f"  Specificity:          {metrics['specificity']:.4f}  [TN/(TN+FP)]")
+    print(f"  Precision (PPV):      {metrics['precision']:.4f}  [TP/(TP+FP)]")
+    print(f"  NPV:                  {metrics['npv']:.4f}  [TN/(TN+FN)]")
+
+    print(f"\nCombined Metrics:")
+    print(f"  Accuracy:   {metrics['accuracy']:.4f}")
+    print(f"  F1 Score:   {metrics['f1_score']:.4f}")
+    print(f"  F2 Score:   {metrics['f2_score']:.4f}  [Weights recall 4x > precision]")
+
+    print(f"\n{'='*60}")
 
 
 def validate_model(
@@ -355,6 +613,13 @@ def main():
     parser.add_argument('--project', type=str, default=None, help='Output project')
     parser.add_argument('--name', type=str, default=None, help='Run name')
 
+    # Evaluation mode
+    parser.add_argument('--eval-mode', type=str, default='box',
+                        choices=['box', 'patch'],
+                        help='Evaluation mode: box (standard mAP) or patch (patch-level sensitivity/specificity)')
+    parser.add_argument('--labels-dir', type=str, default=None,
+                        help='Labels directory for patch-level evaluation (defaults to data/labels/{split})')
+
     # Comparison mode
     parser.add_argument('--compare', action='store_true',
                         help='Compare YOLO26 with YOLOv9 baseline')
@@ -406,8 +671,54 @@ def main():
             imgsz=args.imgsz,
             device=args.device
         )
+    elif args.eval_mode == 'patch':
+        # Patch-level evaluation mode (YOLOv9-style)
+        print(f"\nEvaluation Mode: PATCH-LEVEL")
+        print(f"  This matches YOLOv9's evaluation methodology")
+        print(f"  Confidence threshold: {args.conf}")
+
+        # Determine labels directory
+        labels_dir = args.labels_dir
+        if labels_dir is None:
+            labels_dir = str(PROJECT_ROOT / 'data' / 'labels' / args.split)
+
+        # Run patch-level evaluation
+        save_dir = args.project or str(PROJECT_ROOT / 'runs' / 'val')
+        save_dir = Path(save_dir) / (args.name or f"patch_eval_{args.split}")
+
+        metrics = run_patch_level_evaluation(
+            weights=args.weights,
+            data_config=args.data,
+            labels_dir=labels_dir,
+            split=args.split,
+            imgsz=args.imgsz,
+            conf_thres=args.conf,
+            device=args.device,
+            save_dir=str(save_dir)
+        )
+
+        if metrics:
+            print_patch_metrics(metrics, title=f"Patch-Level Metrics ({args.split})")
+
+            # Log to WandB
+            if wandb_enabled and WANDB_AVAILABLE:
+                try:
+                    wandb.log({
+                        'patch/sensitivity': metrics['sensitivity'],
+                        'patch/specificity': metrics['specificity'],
+                        'patch/precision': metrics['precision'],
+                        'patch/f1_score': metrics['f1_score'],
+                        'patch/f2_score': metrics['f2_score'],
+                        'patch/accuracy': metrics['accuracy'],
+                        'patch/tp': metrics['tp'],
+                        'patch/tn': metrics['tn'],
+                        'patch/fp': metrics['fp'],
+                        'patch/fn': metrics['fn'],
+                    })
+                except Exception as e:
+                    print(f"Warning: Failed to log patch metrics to WandB: {e}")
     else:
-        # Standard validation
+        # Standard box-level validation
         results = validate_model(
             weights=args.weights,
             data_config=args.data,

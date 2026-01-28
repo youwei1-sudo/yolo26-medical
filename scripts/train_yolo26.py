@@ -10,10 +10,16 @@ WandB Integration:
     - Logs model checkpoints as artifacts
     - Tracks hyperparameters and system info
 
+Squash Preprocessing:
+    - Optional YOLOv9-style squash preprocessing via --squash flag
+    - Can use pre-squashed data directory via --squash-data
+    - Aligns preprocessing pipeline with YOLOv9 for consistent results
+
 Usage:
     python train_yolo26.py --model yolo26s --epochs 200
     python train_yolo26.py --model yolo26s --wandb-project ImgAssist_YOLO26
     python train_yolo26.py --model yolo26s --no-wandb  # Disable WandB
+    python train_yolo26.py --model yolo26s --squash-data data/squashed_640  # Use pre-squashed data
 """
 
 import argparse
@@ -25,6 +31,7 @@ from datetime import datetime
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / 'scripts'))
 
 # Try to import wandb for logging
 try:
@@ -108,9 +115,35 @@ def log_final_results_to_wandb(results, args):
         print(f"Warning: Failed to log final results to WandB: {e}")
 
 
+def get_data_config(args) -> str:
+    """
+    Get the appropriate data config path.
+
+    If --squash-data is specified, create a data config for the squashed dataset.
+    Otherwise, use the default data config.
+    """
+    if args.squash_data:
+        squash_data_dir = Path(args.squash_data)
+        if not squash_data_dir.is_absolute():
+            squash_data_dir = PROJECT_ROOT / squash_data_dir
+
+        data_yaml = squash_data_dir / 'data_2class.yaml'
+        if data_yaml.exists():
+            print(f"\nUsing squashed data config: {data_yaml}")
+            return str(data_yaml)
+        else:
+            print(f"Warning: Squashed data config not found at {data_yaml}")
+            print("Falling back to default data config")
+
+    return args.data
+
+
 def train_yolo26(args):
     """Run YOLO26 fine-tuning."""
     from ultralytics import YOLO
+
+    # Get data config (handles squash data if specified)
+    data_config = get_data_config(args)
 
     # Load pretrained model
     print(f"\nLoading pretrained {args.model}...")
@@ -123,7 +156,7 @@ def train_yolo26(args):
 
     # Prepare training arguments
     train_args = {
-        'data': args.data,
+        'data': data_config,
         'epochs': args.epochs,
         'imgsz': args.imgsz,
         'batch': args.batch,
@@ -189,7 +222,9 @@ def train_yolo26(args):
     print(f"YOLO26 Training Configuration")
     print(f"{'='*60}")
     print(f"Model:      {args.model}")
-    print(f"Data:       {args.data}")
+    print(f"Data:       {data_config}")
+    if args.squash_data:
+        print(f"  (Squash preprocessing: ENABLED)")
     print(f"Epochs:     {args.epochs}")
     print(f"Batch size: {args.batch}")
     print(f"Image size: {args.imgsz}")
@@ -305,6 +340,10 @@ def main():
                         help='WandB run name (defaults to --name)')
     parser.add_argument('--no-wandb', action='store_true',
                         help='Disable WandB logging')
+
+    # Squash preprocessing settings
+    parser.add_argument('--squash-data', type=str, default=None,
+                        help='Path to pre-squashed data directory (e.g., data/squashed_640)')
 
     args = parser.parse_args()
 
