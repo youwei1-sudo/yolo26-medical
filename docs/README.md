@@ -10,6 +10,7 @@ YOLO26 fine-tuning for ImgAssist OCT cancer detection.
 
 | Document | Description |
 |----------|-------------|
+| [YOLO26_vs_YOLOv9_Analysis_Report.md](YOLO26_vs_YOLOv9_Analysis_Report.md) | **Comparison Report**: YOLO26 vs YOLOv9 full analysis |
 | [DATA_FLOW.md](DATA_FLOW.md) | **Complete pipeline**: Data → Preprocessing → Training → Inference |
 | [PREPROCESSING.md](PREPROCESSING.md) | **Critical Fix**: Y-axis squash preprocessing to fix Val-Test gap |
 | [TRAINING.md](TRAINING.md) | Training configuration and results |

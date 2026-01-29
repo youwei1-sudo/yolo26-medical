@@ -144,3 +144,93 @@ python scripts/compare_yolov9_yolo26.py \
 
 ### YOLO26m
 - 权重: `runs/finetune/yolo26m_v2_optimized/weights/best.pt`
+
+### Validation 有两种模式：                                                                                                                                                              
+                                                                                                                                                                                       
+  1. Box-Level (框级) - 标准目标检测                                                                                                                                                   
+                                                                                                                                                                                       
+  代码位置: val_yolo26.py:385-446                                                                                                                                                      
+                                                                                                                                                                                       
+  # 使用 Ultralytics 内置 model.val()                                                                                                                                                  
+  results = model.val(                                                                                                                                                                 
+      data=data_config,                                                                                                                                                                
+      split=split,                                                                                                                                                                     
+      conf=conf_thres,    # 默认 0.25                                                                                                                                                  
+      iou=iou_thres,      # 默认 0.5                                                                                                                                                   
+  )                                                                                                                                                                                    
+                                                                                                                                                                                       
+  计算的指标:                                                                                                                                                                          
+  - mAP@0.5: IoU=0.5 时的平均精度                                                                                                                                                      
+  - mAP@0.5:0.95: IoU 从 0.5 到 0.95 的平均                                                                                                                                            
+  - Precision: TP / (TP + FP)                                                                                                                                                          
+  - Recall: TP / (TP + FN)                                                                                                                                                             
+                                                                                                                                                                                       
+  这是 每个检测框 与 GT 框的 IoU 匹配。                                                                                                                                                
+                                                                                                                                                                                       
+  ---                                                                                                                                                                                  
+  2. Patch-Level (补丁级) - 医学影像专用                                                                                                                                               
+                                                                                                                                                                                       
+  代码位置: val_yolo26.py:134-212                                                                                                                                                      
+                                                                                                                                                                                       
+  核心逻辑 - 每张图像是一个样本:                                                                                                                                                       
+                                                                                                                                                                                       
+  for img_name in all_images:                                                                                                                                                          
+      has_gt = len(gt_boxes) > 0      # 图像有无 GT 框                                                                                                                                 
+      has_pred = len(pred_boxes) > 0   # 图像有无预测框 (conf >= threshold)                                                                                                            
+                                                                                                                                                                                       
+      if has_gt and has_pred:      TP += 1   # 有癌症，检测到了                                                                                                                        
+      elif not has_gt and not has_pred: TN += 1   # 无癌症，没误报                                                                                                                     
+      elif not has_gt and has_pred:     FP += 1   # 无癌症，但误报了                                                                                                                   
+      else:                             FN += 1   # 有癌症，但漏诊了！                                                                                                                 
+                                                                                                                                                                                       
+  计算的指标:                                                                                                                                                                          
+  ┌─────────────┬────────────┬────────────────────┐                                                                                                                                    
+  │    指标     │    公式    │        意义        │                                                                                                                                    
+  ├─────────────┼────────────┼────────────────────┤                                                                                                                                    
+  │ Sensitivity │ TP/(TP+FN) │ 不漏诊率 (最重要!) │                                                                                                                                    
+  ├─────────────┼────────────┼────────────────────┤                                                                                                                                    
+  │ Specificity │ TN/(TN+FP) │ 不误报率           │                                                                                                                                    
+  ├─────────────┼────────────┼────────────────────┤                                                                                                                                    
+  │ Precision   │ TP/(TP+FP) │ 阳性预测准确率     │                                                                                                                                    
+  ├─────────────┼────────────┼────────────────────┤                                                                                                                                    
+  │ F2 Score    │ 5PR/(4P+R) │ 召回率权重 4 倍    │                                                                                                                                    
+  └─────────────┴────────────┴────────────────────┘                                                                                                                                    
+  为什么用 Patch-Level?                                                                                                                                                                
+                                                                                                                                                                                       
+  医学影像中，漏诊 (FN) 比误报 (FP) 严重得多。Patch-level 直接回答：                                                                                                                   
+  "这张图有没有可疑区域？" (二分类)                                                                                                                                                    
+                                                                                                                                                                                       
+  而不是：                                                                                                                                                                             
+  "这个框检测得准不准？" (框匹配)                                                                                                                                                      
+                                                                                                                                                                                       
+  ---                                                                                                                                                                                  
+  两种模式的使用场景                                                                                                                                                                   
+                                                                                                                                                                                       
+  # Box-Level: 标准检测指标                                                                                                                                                            
+  python scripts/val_yolo26.py \                                                                                                                                                       
+      --weights best.pt \                                                                                                                                                              
+      --split test \                                                                                                                                                                   
+      --conf 0.25                                                                                                                                                                      
+                                                                                                                                                                                       
+  # Patch-Level: 医学敏感度指标                                                                                                                                                        
+  python scripts/val_yolo26.py \                                                                                                                                                       
+      --weights best.pt \                                                                                                                                                              
+      --split test \                                                                                                                                                                   
+      --eval-mode patch \                                                                                                                                                              
+      --conf 0.001    # 低阈值保证高敏感度                                                                                                                                             
+                                                                                                                                                                                       
+  ---                                                                                                                                                                                  
+  关键区别                                                                                                                                                                             
+  ┌───────────┬─────────────┬────────────────┐                                                                                                                                         
+  │   方面    │  Box-Level  │  Patch-Level   │                                                                                                                                         
+  ├───────────┼─────────────┼────────────────┤                                                                                                                                         
+  │ 单位      │ 每个检测框  │ 每张图像       │                                                                                                                                         
+  ├───────────┼─────────────┼────────────────┤                                                                                                                                         
+  │ conf 阈值 │ 0.25 (标准) │ 0.001 (高敏感) │                                                                                                                                         
+  ├───────────┼─────────────┼────────────────┤                                                                                                                                         
+  │ 主要指标  │ mAP@0.5     │ Sensitivity    │                                                                                                                                         
+  ├───────────┼─────────────┼────────────────┤                                                                                                                                         
+  │ 临床意义  │ 定位准确性  │ 不漏诊率       │                                                                                                                                         
+  └───────────┴─────────────┴────────────────┘                                                                                                                                         
+                                                                                                                                                                                       
+✻ Worked for 30s                                           
